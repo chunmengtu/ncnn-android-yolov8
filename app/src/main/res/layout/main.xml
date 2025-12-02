@@ -9,11 +9,46 @@
         android:layout_width="fill_parent"
         android:layout_height="wrap_content">
 
-    <Button
-        android:id="@+id/buttonSwitchCamera"
-        android:layout_width="wrap_content"
+        <Button
+            android:id="@+id/buttonMode"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="切换模式 (当前: 图片)" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layoutImageControls"
+        android:orientation="horizontal"
+        android:layout_width="fill_parent"
+        android:layout_height="wrap_content">
+
+        <Button
+            android:id="@+id/buttonSelectImage"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="选择图片" />
+
+        <Button
+            android:id="@+id/buttonDetect"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="检测" />
+
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/layoutCameraControls"
+        android:orientation="horizontal"
+        android:layout_width="fill_parent"
         android:layout_height="wrap_content"
-        android:text="切换摄像头" />
+        android:visibility="gone">
+
+        <Button
+            android:id="@+id/buttonSwitchCamera"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="切换前后摄" />
 
     </LinearLayout>
 
@@ -45,9 +80,23 @@
 
     </LinearLayout>
 
-    <SurfaceView
-        android:id="@+id/cameraview"
+    <FrameLayout
         android:layout_width="fill_parent"
-        android:layout_height="fill_parent" />
+        android:layout_height="fill_parent">
+
+        <SurfaceView
+            android:id="@+id/cameraview"
+            android:layout_width="fill_parent"
+            android:layout_height="fill_parent"
+            android:visibility="gone" />
+
+        <ImageView
+            android:id="@+id/imageView"
+            android:layout_width="fill_parent"
+            android:layout_height="fill_parent"
+            android:contentDescription="Result Image"
+            android:scaleType="fitCenter" />
+
+    </FrameLayout>
 
 </LinearLayout>
