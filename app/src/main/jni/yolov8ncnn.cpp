@@ -15,8 +15,8 @@
 #include <android/asset_manager_jni.h>
 #include <android/native_window_jni.h>
 #include <android/native_window.h>
-
 #include <android/log.h>
+#include <android/bitmap.h>
 
 #include <jni.h>
 
@@ -60,9 +60,10 @@ static int draw_fps(cv::Mat& rgb)
 {
     // resolve moving average
     float avg_fps = 0.f;
+    float current_fps = 0.f;
     {
         static double t0 = 0.f;
-        static float fps_history[10] = {0.f};
+        static float fps_history[60] = {0.f};
 
         double t1 = ncnn::get_current_time();
         if (t0 == 0.f)
@@ -71,29 +72,29 @@ static int draw_fps(cv::Mat& rgb)
             return 0;
         }
 
-        float fps = 1000.f / (t1 - t0);
+        current_fps = 1000.f / (t1 - t0);
         t0 = t1;
 
-        for (int i = 9; i >= 1; i--)
+        for (int i = 59; i >= 1; i--)
         {
             fps_history[i] = fps_history[i - 1];
         }
-        fps_history[0] = fps;
+        fps_history[0] = current_fps;
 
-        if (fps_history[9] == 0.f)
+        if (fps_history[59] == 0.f)
         {
             return 0;
         }
 
-        for (int i = 0; i < 10; i++)
+        for (int i = 0; i < 60; i++)
         {
             avg_fps += fps_history[i];
         }
-        avg_fps /= 10.f;
+        avg_fps /= 60.f;
     }
 
-    char text[32];
-    sprintf(text, "FPS=%.2f", avg_fps);
+    char text[64];
+    sprintf(text, "FPS=%.2f Avg=%.2f", current_fps, avg_fps);
 
     int baseLine = 0;
     cv::Size label_size = cv::getTextSize(text, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
@@ -196,17 +197,17 @@ JNIEXPORT jboolean JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_loadModel(JNIE
     };
 
     const char* modeltypes[9] =
-    {
-        "n",
-        "s",
-        "m",
-        "n",
-        "s",
-        "m",
-        "n",
-        "s",
-        "m"
-    };
+            {
+                    "n",
+                    "s",
+                    "m",
+                    "n",
+                    "s",
+                    "m",
+                    "n",
+                    "s",
+                    "m"
+            };
 
     std::string parampath = std::string("yolov8") + modeltypes[(int)modelid] + tasknames[(int)taskid] + ".ncnn.param";
     std::string modelpath = std::string("yolov8") + modeltypes[(int)modelid] + tasknames[(int)taskid] + ".ncnn.bin";
@@ -296,6 +297,83 @@ JNIEXPORT jboolean JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_setOutputWindo
     __android_log_print(ANDROID_LOG_DEBUG, "ncnn", "setOutputWindow %p", win);
 
     g_camera->set_window(win);
+
+    return JNI_TRUE;
+}
+
+// public native boolean detect(Bitmap bitmap);
+JNIEXPORT jboolean JNICALL Java_com_tencent_yolov8ncnn_YOLOv8Ncnn_detect(JNIEnv* env, jobject thiz, jobject bitmap)
+{
+    if (!g_yolov8)
+        return JNI_FALSE;
+
+    AndroidBitmapInfo info;
+    if (AndroidBitmap_getInfo(env, bitmap, &info) < 0) {
+        __android_log_print(ANDROID_LOG_DEBUG, "ncnn", "AndroidBitmap_getInfo failed");
+        return JNI_FALSE;
+    }
+
+    if (info.format != ANDROID_BITMAP_FORMAT_RGBA_8888) {
+        __android_log_print(ANDROID_LOG_DEBUG, "ncnn", "Bitmap format is not RGBA_8888");
+        return JNI_FALSE;
+    }
+
+    void* pixels = 0;
+    if (AndroidBitmap_lockPixels(env, bitmap, &pixels) < 0) {
+        __android_log_print(ANDROID_LOG_DEBUG, "ncnn", "AndroidBitmap_lockPixels failed");
+        return JNI_FALSE;
+    }
+
+    // Bitmap is RGBA_8888 (4 channels)
+    // OpenCV typically expects BGR or RGB depending on how we use it.
+    // YOLOv8ncnn detection code expects RGB (based on ncnn::Mat::PIXEL_RGB usage in yolov8_det.cpp).
+    // And draw code draws on the mat.
+    
+    // 1. Wrap the raw bitmap pixels in a Mat (this is RGBA)
+    cv::Mat bitmap_mat(info.height, info.width, CV_8UC4, pixels);
+
+    // 2. Convert RGBA to RGB (YOLO inference needs RGB, and we want 3 channels for easier drawing logic reuse)
+    cv::Mat rgb;
+    cv::cvtColor(bitmap_mat, rgb, cv::COLOR_RGBA2RGB);
+
+    {
+        ncnn::MutexLockGuard g(lock);
+        
+        if (g_yolov8)
+        {
+            std::vector<Object> objects;
+            
+            double t0 = ncnn::get_current_time();
+            g_yolov8->detect(rgb, objects);
+            double t1 = ncnn::get_current_time();
+
+            g_yolov8->draw(rgb, objects);
+
+            // draw inference time
+            char text[32];
+            sprintf(text, "%.2f ms", t1 - t0);
+
+            int baseLine = 0;
+            cv::Size label_size = cv::getTextSize(text, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseLine);
+
+            int y = 0;
+            int x = 0;
+
+            cv::rectangle(rgb, cv::Rect(cv::Point(x, y), cv::Size(label_size.width, label_size.height + baseLine)),
+                            cv::Scalar(255, 255, 255), -1);
+
+            cv::putText(rgb, text, cv::Point(x, y + label_size.height),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0));
+        }
+    }
+
+    // 3. Convert back from RGB to RGBA to update the bitmap
+    // Note: copyTo will copy the data into bitmap_mat, which points to the locked pixels.
+    cv::Mat result_rgba;
+    cv::cvtColor(rgb, result_rgba, cv::COLOR_RGB2RGBA);
+    result_rgba.copyTo(bitmap_mat);
+
+    AndroidBitmap_unlockPixels(env, bitmap);
 
     return JNI_TRUE;
 }
